@@ -1,0 +1,5 @@
+{
+  "name": "AuditFrete SaaS - Auditoria de CT-e",
+  "description": "Plataforma SaaS B2B para auditoria automatizada de fretes através do processamento de XML de CT-e, identificando divergências entre valores cobrados e tabelas contratuais.",
+  "requestFramePermissions": []
+}
