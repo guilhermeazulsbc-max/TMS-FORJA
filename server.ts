@@ -183,14 +183,13 @@ insertWeight.run(tableId, 10000, 50000, 5000.00, 0.25);
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+const app = express();
+const PORT = 3000;
 
-  app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '10mb' }));
 
-  // API Routes
-  app.get("/api/dashboard", (req, res) => {
+// API Routes
+app.get("/api/dashboard", (req, res) => {
     const stats = {
       total_audited: db.prepare("SELECT count(*) as count FROM ctes WHERE status = 'audited'").get(),
       total_divergences: db.prepare("SELECT count(*) as count FROM audits WHERE difference > 0.01 OR difference < -0.01").get(),
@@ -739,11 +738,15 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
+    createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
+    }).then(vite => {
+      app.use(vite.middlewares);
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+      });
     });
-    app.use(vite.middlewares);
   } else {
     app.use(express.static(path.join(__dirname, "dist")));
     app.get("*", (req, res) => {
@@ -751,12 +754,4 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-
-  return app;
-}
-
-const appPromise = startServer();
-export default appPromise;
+export default app;
