@@ -252,11 +252,20 @@ async function startServer() {
     else if (tomaType === 3 || tomaType === "3") tomadorCnpj = infCte.dest?.CNPJ;
     else tomadorCnpj = infCte.rem?.CNPJ || "";
 
+    const tomadorCnpjValue = tomadorCnpj || "";
+
+    if (!carrierCnpj) {
+      throw new Error("CNPJ do transportador (emitente) não encontrado no XML.");
+    }
+    if (!tomadorCnpjValue) {
+      throw new Error("CNPJ do tomador do serviço não pôde ser determinado a partir do XML.");
+    }
+
     const insertCte = db.prepare(`
       INSERT INTO ctes (tenant_id, xml_key, carrier_cnpj, tomador_cnpj, total_value, weight, origin_zip, dest_zip, origin_city, dest_city, cfop, icms_value, icms_base, icms_rate, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = insertCte.run(tenantId, xmlKey, carrierCnpj, tomadorCnpj, totalValue, weight, originZip, destZip, originCity, destCity, cfop, icmsValue, icmsBase, icmsRate, 'audited');
+    const result = insertCte.run(tenantId, xmlKey, carrierCnpj, tomadorCnpjValue, totalValue, weight, originZip, destZip, originCity, destCity, cfop, icmsValue, icmsBase, icmsRate, 'audited');
     const cteId = result.lastInsertRowid;
 
     const carrier = db.prepare("SELECT id FROM carriers WHERE cnpj = ?").get(carrierCnpj) as { id: number };

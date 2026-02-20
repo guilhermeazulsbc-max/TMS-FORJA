@@ -319,7 +319,7 @@ export default function App() {
           // Partial success
         } 
       } else {
-        showNotification(`Erro: ${result.error || 'Falha no upload.'}`);
+        showNotification(`Erro: ${result.message || result.error || 'Falha no upload.'}`);
       }
     } catch (err) {
       console.error("Upload failed", err);
