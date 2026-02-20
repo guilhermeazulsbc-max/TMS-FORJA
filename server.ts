@@ -18,7 +18,10 @@ const parser = new XMLParser({
 });
 
 // Initialize Database
-const db = new Database("audit_frete.db");
+const dbPath = process.env.NODE_ENV === 'production' 
+  ? '/tmp/audit_frete.db' 
+  : 'audit_frete.db';
+const db = new Database(dbPath);
 db.pragma("foreign_keys = ON");
 
 // Force reset schema for this update to ensure columns exist
