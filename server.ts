@@ -415,6 +415,91 @@ async function startServer() {
     res.json(audits);
   });
 
+  app.put('/api/memory-calculations/:id/waive', (req, res) => {
+    db.prepare(`UPDATE memory_calculations SET status = 'ABONADO' WHERE id = ?`).run(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get('/api/abonos', (req, res) => {
+    try {
+      const divergentAudits = db.prepare(`
+        SELECT 
+          a.id, 
+          c.xml_key as identifier, 
+          'Auditoria de CT-e' as description,
+          a.difference,
+          'audit' as type,
+          a.audit_date as date,
+          c.total_value as charged_value,
+          a.calculated_value
+        FROM audits a
+        JOIN ctes c ON a.cte_id = c.id
+        WHERE a.status = 'open' AND ABS(a.difference) >= 0.01
+      `).all();
+
+      const memoryCalcErrors = db.prepare(`
+        SELECT
+          id,
+          codigo as identifier,
+          'Memória de Cálculo' as description,
+          (frete_all_in - calculated_total) as difference,
+          'memory_calc' as type,
+          created_at as date,
+          frete_all_in as charged_value,
+          calculated_total as calculated_value
+        FROM memory_calculations
+        WHERE status = 'ERRO DE CONCILIAÇÃO'
+      `).all();
+
+      const allAbonos = [...divergentAudits, ...memoryCalcErrors];
+      allAbonos.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      res.json(allAbonos);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/aprovacoes', (req, res) => {
+    try {
+      const approvedAudits = db.prepare(`
+        SELECT 
+          a.id, 
+          c.xml_key as identifier, 
+          'Auditoria de CT-e' as description,
+          a.difference,
+          'audit' as type,
+          a.audit_date as date,
+          c.total_value as charged_value,
+          a.calculated_value
+        FROM audits a
+        JOIN ctes c ON a.cte_id = c.id
+        WHERE a.status = 'waived'
+      `).all();
+
+      const approvedMemoryCalcs = db.prepare(`
+        SELECT
+          id,
+          codigo as identifier,
+          'Memória de Cálculo' as description,
+          (frete_all_in - calculated_total) as difference,
+          'memory_calc' as type,
+          created_at as date,
+          frete_all_in as charged_value,
+          calculated_total as calculated_value
+        FROM memory_calculations
+        WHERE status = 'ABONADO'
+      `).all();
+
+      const allAprovacoes = [...approvedAudits, ...approvedMemoryCalcs];
+      allAprovacoes.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      res.json(allAprovacoes);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/cte/:id", (req, res) => {
     const { id } = req.params;
     const cte = db.prepare(`
@@ -669,6 +754,9 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  return app;
 }
 
-startServer();
+const appPromise = startServer();
+export default appPromise;

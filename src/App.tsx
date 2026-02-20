@@ -59,7 +59,7 @@ interface DashboardStats {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'audits' | 'upload' | 'carriers' | 'tables' | 'settings' | 'memory' | 'abono' | 'import-tables'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'audits' | 'upload' | 'carriers' | 'tables' | 'settings' | 'memory' | 'abono' | 'import-tables' | 'aprovacoes'>('dashboard');
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [audits, setAudits] = useState<Audit[]>([]);
   const [carriers, setCarriers] = useState<any[]>([]);
@@ -89,7 +89,8 @@ export default function App() {
     status: ''
   });
 
-  const [divergentAudits, setDivergentAudits] = useState<Audit[]>([]);
+  const [abonos, setAbonos] = useState<any[]>([]);
+  const [aprovacoes, setAprovacoes] = useState<any[]>([]);
   const [selectedImportErrors, setSelectedImportErrors] = useState<any[]>([]);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
 
@@ -108,9 +109,10 @@ export default function App() {
     fetchAudits();
     fetchCarriers();
     fetchTables();
-    fetchDivergentAudits();
     fetchMemoryCalculations();
     fetchTableImports();
+    fetchAbonos();
+    fetchAprovacoes();
   };
 
   const fetchTableImports = async () => {
@@ -186,30 +188,77 @@ export default function App() {
     }
   };
 
-  const fetchDivergentAudits = async () => {
+  const fetchAbonos = async () => {
     try {
-      const res = await fetch('/api/audits/divergent');
-      if (!res.ok) {
-        const errorText = await res.text();
-        showNotification(`Erro ao carregar divergências: ${errorText}`);
-        return;
+      const res = await fetch('/api/abonos');
+      if (res.ok) {
+        const data = await res.json();
+        setAbonos(data);
+      } else {
+        showNotification('Erro ao carregar itens para abono.');
       }
-      const data = await res.json();
-      setDivergentAudits(data);
-    } catch (err: any) {
-      console.error("Failed to fetch divergent audits", err);
-      showNotification(`Erro de conexão: ${err.message}`);
+    } catch (err) {
+      showNotification('Erro de conexão ao carregar abonos.');
     }
   };
 
-  const handleWaiveAudit = async (auditId: number) => {
+  const fetchAprovacoes = async () => {
     try {
-      const res = await fetch(`/api/audits/${auditId}/waive`, { method: 'PUT' });
+      const res = await fetch('/api/aprovacoes');
       if (res.ok) {
-        showNotification('Auditoria abonada com sucesso.');
+        const data = await res.json();
+        setAprovacoes(data);
+      } else {
+        showNotification('Erro ao carregar aprovações.');
+      }
+    } catch (err) {
+      showNotification('Erro de conexão ao carregar aprovações.');
+    }
+  };
+
+  const handleExportAprovacoesXLS = () => {
+    if (aprovacoes.length === 0) {
+      showNotification("Não há aprovações para exportar.");
+      return;
+    }
+
+    const header = [
+      "Identificador",
+      "Origem",
+      "Valor Cobrado",
+      "Valor Calculado",
+      "Diferença",
+      "Data"
+    ];
+
+    const data = aprovacoes.map(item => ({
+      "Identificador": item.identifier,
+      "Origem": item.description,
+      "Valor Cobrado": item.charged_value,
+      "Valor Calculado": item.calculated_value,
+      "Diferença": item.difference,
+      "Data": new Date(item.date).toLocaleDateString('pt-BR')
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(data, { header });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Aprovações");
+    XLSX.writeFile(workbook, "Relatorio_Aprovacoes.xlsx");
+    showNotification("Exportação de aprovações iniciada.");
+  };
+
+  const handleWaive = async (item: any) => {
+    const url = item.type === 'audit' 
+      ? `/api/audits/${item.id}/waive` 
+      : `/api/memory-calculations/${item.id}/waive`;
+
+    try {
+      const res = await fetch(url, { method: 'PUT' });
+      if (res.ok) {
+        showNotification('Item abonado com sucesso.');
         refreshData();
       } else {
-        showNotification('Erro ao abonar auditoria.');
+        showNotification('Erro ao abonar item.');
       }
     } catch (err) {
       showNotification('Erro de conexão ao abonar.');
@@ -665,7 +714,7 @@ export default function App() {
             <SidebarGroup label="Auditoria">
               <SidebarItem icon={<Database size={16} />} label="Memória de Cálculo" active={activeTab === 'memory'} onClick={() => setActiveTab('memory')} />
               <SidebarItem icon={<TrendingUp size={16} />} label="Recuperação" onClick={() => setActiveTab('dashboard')} />
-              <SidebarItem icon={<CheckCircle2 size={16} />} label="Aprovações" onClick={() => showNotification("Módulo de Aprovações Financeiras")} />
+              <SidebarItem icon={<CheckCircle2 size={16} />} label="Aprovações" active={activeTab === 'aprovacoes'} onClick={() => setActiveTab('aprovacoes')} />
             </SidebarGroup>
             <SidebarGroup label="Configurações">
               <SidebarItem icon={<Settings size={16} />} label="Parâmetros" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
@@ -1194,35 +1243,38 @@ export default function App() {
 
             {activeTab === 'abono' && (
               <motion.div key="abono" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
-                <div className="bg-white p-3 border border-slate-300 rounded shadow-sm flex justify-between items-center">
+                <div className="bg-white p-3 border border-slate-300 rounded shadow-sm">
                   <h2 className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-                    <CheckCircle2 size={18} className="text-blue-800" /> Gestão de Abonos
+                    <CheckCircle2 size={18} className="text-blue-800" /> Gerenciamento de Pendências e Abonos
                   </h2>
-                  <FileUploadButton className="bg-blue-800 text-white px-3 py-1 text-[10px] font-bold uppercase shadow flex items-center gap-1 hover:bg-blue-900">
-                    <FileUp size={12} /> Importar XML
-                  </FileUploadButton>
                 </div>
                 <div className="bg-white border border-slate-300 rounded shadow-sm overflow-hidden">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                       <thead className="bg-slate-100 text-slate-600 text-[10px] uppercase font-bold border-b border-slate-300">
                         <tr>
-                          <th className="px-3 py-2">Chave CT-e</th>
-                          <th className="px-3 py-2">Transportadora</th>
-                          <th className="px-3 py-2 text-right">Diferença</th>
-                          <th className="px-3 py-2 text-center">Ação</th>
+                          <th className="px-2 py-2">Identificador</th>
+                          <th className="px-2 py-2">Origem</th>
+                          <th className="px-2 py-2 text-right">Valor Cobrado</th>
+                          <th className="px-2 py-2 text-right">Valor Calculado</th>
+                          <th className="px-2 py-2 text-right">Diferença</th>
+                          <th className="px-2 py-2 text-center">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="text-xs divide-y divide-slate-200">
-                        {divergentAudits.map((audit) => (
-                          <tr key={audit.id}>
-                            <td className="px-3 py-1.5 font-mono text-slate-500">{audit.xml_key.slice(-15)}</td>
-                            <td className="px-3 py-1.5">{audit.carrier_name}</td>
-                            <td className="px-3 py-1.5 text-right font-bold text-red-600">{audit.difference.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
-                            <td className="px-3 py-1.5 text-center">
+                        {abonos.map((item) => (
+                          <tr key={`${item.type}-${item.id}`}>
+                            <td className="px-2 py-1.5 font-mono text-slate-500">{item.identifier}</td>
+                            <td className="px-2 py-1.5">{item.description}</td>
+                            <td className="px-2 py-1.5 text-right">{item.charged_value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                            <td className="px-2 py-1.5 text-right">{item.calculated_value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                            <td className={`px-2 py-1.5 text-right font-semibold ${item.difference > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {item.difference.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                            </td>
+                            <td className="px-2 py-1.5 text-center">
                               <button 
-                                className="bg-emerald-600 text-white px-3 py-1 text-[10px] font-bold uppercase shadow rounded hover:bg-emerald-700"
-                                onClick={() => handleWaiveAudit(audit.id)}
+                                className="bg-emerald-600 text-white px-2 py-0.5 text-[10px] font-bold uppercase rounded hover:bg-emerald-700"
+                                onClick={() => handleWaive(item)}
                               >
                                 Abonar
                               </button>
@@ -1290,6 +1342,56 @@ export default function App() {
                             </td>
                           </tr>
                         ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'aprovacoes' && (
+              <motion.div key="aprovacoes" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+                <div className="bg-white p-3 border border-slate-300 rounded shadow-sm flex justify-between items-center">
+                  <h2 className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                    <CheckCircle2 size={18} className="text-blue-800" /> Histórico de Aprovações
+                  </h2>
+                  <button 
+                    className="bg-emerald-600 text-white px-3 py-1 text-[10px] font-bold uppercase shadow flex items-center gap-1 hover:bg-emerald-700"
+                    onClick={handleExportAprovacoesXLS}
+                  >
+                    <Download size={12} /> Exportar Excel
+                  </button>
+                </div>
+                <div className="bg-white border border-slate-300 rounded shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead className="bg-slate-100 text-slate-600 text-[10px] uppercase font-bold border-b border-slate-300">
+                        <tr>
+                          <th className="px-2 py-2">Identificador</th>
+                          <th className="px-2 py-2">Origem</th>
+                          <th className="px-2 py-2 text-right">Valor Cobrado</th>
+                          <th className="px-2 py-2 text-right">Valor Calculado</th>
+                          <th className="px-2 py-2 text-right">Diferença</th>
+                          <th className="px-2 py-2">Data</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-xs divide-y divide-slate-200">
+                        {aprovacoes.length > 0 ? aprovacoes.map((item) => (
+                          <tr key={`${item.type}-${item.id}`}>
+                            <td className="px-2 py-1.5 font-mono text-slate-500">{item.identifier}</td>
+                            <td className="px-2 py-1.5">{item.description}</td>
+                            <td className="px-2 py-1.5 text-right">{item.charged_value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                            <td className="px-2 py-1.5 text-right">{item.calculated_value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                            <td className={`px-2 py-1.5 text-right font-semibold ${item.difference > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {item.difference.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                            </td>
+                            <td className="px-2 py-1.5">{new Date(item.date).toLocaleDateString('pt-BR')}</td>
+                          </tr>
+                        )) : (
+                          <tr>
+                            <td colSpan={6} className="px-4 py-8 text-center text-slate-400 italic">Nenhuma aprovação encontrada.</td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
