@@ -2,11 +2,19 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import Database from "better-sqlite3";
 import { XMLParser } from "fast-xml-parser";
 import multer from 'multer';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+let Database: any;
+try {
+  Database = require('better-sqlite3');
+} catch (err) {
+  console.error("Failed to load better-sqlite3:", err);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,96 +26,88 @@ const parser = new XMLParser({
 });
 
 // Initialize Database
-const dbPath = process.env.NODE_ENV === 'production' 
-  ? '/tmp/audit_frete.db' 
-  : 'audit_frete.db';
-const db = new Database(dbPath);
-db.pragma("foreign_keys = ON");
+let db: any;
+try {
+  const dbPath = process.env.NODE_ENV === 'production' 
+    ? '/tmp/audit_frete.db' 
+    : 'audit_frete.db';
+  db = new Database(dbPath);
+  db.pragma("foreign_keys = ON");
 
-// Force reset schema for this update to ensure columns exist
-db.exec(`
-  DROP TABLE IF EXISTS audits;
-  DROP TABLE IF EXISTS ctes;
-  DROP TABLE IF EXISTS zip_ranges;
-  DROP TABLE IF EXISTS weight_ranges;
-  DROP TABLE IF EXISTS freight_tables;
-  DROP TABLE IF EXISTS carriers;
-  DROP TABLE IF EXISTS tenants;
-  DROP TABLE IF EXISTS memory_calculations;
-  DROP TABLE IF EXISTS table_imports;
+  // Ensure schema exists
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tenants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      cnpj TEXT UNIQUE NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE tenants (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    cnpj TEXT UNIQUE NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+    CREATE TABLE IF NOT EXISTS carriers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tenant_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      cnpj TEXT NOT NULL,
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+    );
 
-  CREATE TABLE carriers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tenant_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    cnpj TEXT NOT NULL,
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
-  );
+    CREATE TABLE IF NOT EXISTS freight_tables (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tenant_id INTEGER NOT NULL,
+      carrier_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      version TEXT NOT NULL,
+      is_active INTEGER DEFAULT 1,
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+      FOREIGN KEY (carrier_id) REFERENCES carriers(id)
+    );
 
-  CREATE TABLE freight_tables (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tenant_id INTEGER NOT NULL,
-    carrier_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    version TEXT NOT NULL,
-    is_active INTEGER DEFAULT 1,
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id),
-    FOREIGN KEY (carrier_id) REFERENCES carriers(id)
-  );
+    CREATE TABLE IF NOT EXISTS weight_ranges (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      table_id INTEGER NOT NULL,
+      min_weight REAL NOT NULL,
+      max_weight REAL NOT NULL,
+      base_value REAL NOT NULL,
+      kg_extra_value REAL DEFAULT 0,
+      FOREIGN KEY (table_id) REFERENCES freight_tables(id)
+    );
 
-  CREATE TABLE weight_ranges (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    table_id INTEGER NOT NULL,
-    min_weight REAL NOT NULL,
-    max_weight REAL NOT NULL,
-    base_value REAL NOT NULL,
-    kg_extra_value REAL DEFAULT 0,
-    FOREIGN KEY (table_id) REFERENCES freight_tables(id)
-  );
+    CREATE TABLE IF NOT EXISTS zip_ranges (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      table_id INTEGER NOT NULL,
+      start_zip TEXT NOT NULL,
+      end_zip TEXT NOT NULL,
+      region_name TEXT,
+      ad_valorem_pct REAL DEFAULT 0,
+      gris_pct REAL DEFAULT 0,
+      pedagio_per_100kg REAL DEFAULT 0,
+      tas_value REAL DEFAULT 0,
+      tde_value REAL DEFAULT 0,
+      FOREIGN KEY (table_id) REFERENCES freight_tables(id)
+    );
 
-  CREATE TABLE zip_ranges (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    table_id INTEGER NOT NULL,
-    start_zip TEXT NOT NULL,
-    end_zip TEXT NOT NULL,
-    region_name TEXT,
-    ad_valorem_pct REAL DEFAULT 0,
-    gris_pct REAL DEFAULT 0,
-    pedagio_per_100kg REAL DEFAULT 0,
-    tas_value REAL DEFAULT 0,
-    tde_value REAL DEFAULT 0,
-    FOREIGN KEY (table_id) REFERENCES freight_tables(id)
-  );
+    CREATE TABLE IF NOT EXISTS ctes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tenant_id INTEGER NOT NULL,
+      xml_key TEXT UNIQUE NOT NULL,
+      carrier_cnpj TEXT NOT NULL,
+      tomador_cnpj TEXT NOT NULL,
+      total_value REAL NOT NULL,
+      weight REAL NOT NULL,
+      origin_zip TEXT,
+      dest_zip TEXT,
+      origin_city TEXT,
+      dest_city TEXT,
+      cfop TEXT,
+      icms_value REAL,
+      icms_base REAL,
+      icms_rate REAL,
+      status TEXT DEFAULT 'pending',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+    );
 
-  CREATE TABLE ctes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tenant_id INTEGER NOT NULL,
-    xml_key TEXT UNIQUE NOT NULL,
-    carrier_cnpj TEXT NOT NULL,
-    tomador_cnpj TEXT NOT NULL,
-    total_value REAL NOT NULL,
-    weight REAL NOT NULL,
-    origin_zip TEXT,
-    dest_zip TEXT,
-    origin_city TEXT,
-    dest_city TEXT,
-    cfop TEXT,
-    icms_value REAL,
-    icms_base REAL,
-    icms_rate REAL,
-    status TEXT DEFAULT 'pending',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
-  );
-
-    CREATE TABLE audits (
+    CREATE TABLE IF NOT EXISTS audits (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       cte_id INTEGER NOT NULL,
       calculated_value REAL NOT NULL,
@@ -160,23 +160,24 @@ db.exec(`
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (import_id) REFERENCES table_imports(id)
     );
-`);
+  `);
 
-// Seed initial tenant and the carrier from the user's XML example
-const insertTenant = db.prepare("INSERT INTO tenants (name, cnpj) VALUES (?, ?)");
-const tenantId = insertTenant.run("Empresa Exemplo S.A.", "12.345.678/0001-90").lastInsertRowid;
+  // Seed initial data safely
+  const tenantId = 1;
+  const carrierId = 1;
+  db.prepare("INSERT OR IGNORE INTO tenants (id, name, cnpj) VALUES (?, ?, ?)").run(tenantId, "Empresa Exemplo S.A.", "12.345.678/0001-90");
+  db.prepare("INSERT OR IGNORE INTO carriers (id, tenant_id, name, cnpj) VALUES (?, ?, ?, ?)").run(carrierId, tenantId, "R&R ISA'S TRANSPORTES LTDA", "35856333000100");
+  db.prepare("INSERT OR IGNORE INTO freight_tables (id, tenant_id, carrier_id, name, version) VALUES (1, ?, ?, ?, ?)").run(tenantId, carrierId, "Tabela Padrão 2026", "v1.0");
+  
+  const tableId = 1;
+  db.prepare("INSERT OR IGNORE INTO weight_ranges (id, table_id, min_weight, max_weight, base_value, kg_extra_value) VALUES (1, ?, ?, ?, ?, ?)").run(tableId, 0, 1000, 500.00, 0.50);
+  db.prepare("INSERT OR IGNORE INTO weight_ranges (id, table_id, min_weight, max_weight, base_value, kg_extra_value) VALUES (2, ?, ?, ?, ?, ?)").run(tableId, 1000, 10000, 2500.00, 0.35);
+  db.prepare("INSERT OR IGNORE INTO weight_ranges (id, table_id, min_weight, max_weight, base_value, kg_extra_value) VALUES (3, ?, ?, ?, ?, ?)").run(tableId, 10000, 50000, 5000.00, 0.25);
 
-const insertCarrier = db.prepare("INSERT INTO carriers (tenant_id, name, cnpj) VALUES (?, ?, ?)");
-const carrierId = insertCarrier.run(tenantId, "R&R ISA'S TRANSPORTES LTDA", "35856333000100").lastInsertRowid;
-
-const insertTable = db.prepare("INSERT INTO freight_tables (tenant_id, carrier_id, name, version) VALUES (?, ?, ?, ?)");
-const tableId = insertTable.run(tenantId, carrierId, "Tabela Padrão 2026", "v1.0").lastInsertRowid;
-
-// Add some realistic weight ranges for the audit to work
-const insertWeight = db.prepare("INSERT INTO weight_ranges (table_id, min_weight, max_weight, base_value, kg_extra_value) VALUES (?, ?, ?, ?, ?)");
-insertWeight.run(tableId, 0, 1000, 500.00, 0.50);
-insertWeight.run(tableId, 1000, 10000, 2500.00, 0.35);
-insertWeight.run(tableId, 10000, 50000, 5000.00, 0.25);
+} catch (err) {
+  console.error("Database initialization failed:", err);
+  // We don't exit, so the server can still start and return errors instead of crashing
+}
 
 
 // Configure Multer for file uploads
@@ -188,7 +189,19 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
+// Health check route (no DB required)
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", environment: process.env.NODE_ENV });
+});
+
 // API Routes
+app.use((req, res, next) => {
+  if (!db) {
+    return res.status(503).json({ error: "Banco de dados não disponível. Verifique os logs do servidor." });
+  }
+  next();
+});
+
 app.get("/api/dashboard", (req, res) => {
     const stats = {
       total_audited: db.prepare("SELECT count(*) as count FROM ctes WHERE status = 'audited'").get(),
@@ -748,9 +761,15 @@ app.get("/api/dashboard", (req, res) => {
       });
     });
   } else {
-    app.use(express.static(path.join(__dirname, "dist")));
+    const distPath = path.join(__dirname, "dist");
+    app.use(express.static(distPath));
     app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
+      const indexPath = path.join(distPath, "index.html");
+      res.sendFile(indexPath, (err) => {
+        if (err) {
+          res.status(500).send("Error: index.html not found. Please ensure the project is built correctly.");
+        }
+      });
     });
   }
 
